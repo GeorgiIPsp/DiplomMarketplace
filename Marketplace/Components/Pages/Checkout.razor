@@ -1,0 +1,269 @@
+﻿@page "/checkout"
+@using yyy.Services
+@using Marketplace.Models
+@inject IProductService ProductService
+@inject IOrderService OrderService
+@inject IJSRuntime JSRuntime
+@inject NavigationManager NavigationManager
+@inject UserService UserService
+@rendermode InteractiveServer
+<link href="css/chk.css" rel="stylesheet" />
+
+<!-- Верхняя панель навигации -->
+<nav class="top-nav">
+    <div class="nav-container">
+        <div class="nav-brand">VALUED</div>
+        <ul class="nav-menu" style="margin-left: auto;">
+            <li><a href="/" class="nav-link">Главная</a></li>
+            <li><a href="/profile" class="nav-link">Профиль</a></li>
+            <li><a href="/cart" class="nav-link cart-link">Корзина (@cartItemsCount)</a></li>
+        </ul>
+    </div>
+</nav>
+
+<div class="checkout-container">
+    @if (!orderCompleted)
+    {
+        <h1>Оформление заказа</h1>
+
+        @if (cartItems?.Any() == true)
+        {
+            <div class="checkout-content">
+                <div class="order-items">
+                    <h2>Ваш заказ</h2>
+                    @foreach (var cartItem in cartItems)
+                    {
+                        var product = products.FirstOrDefault(p => p.Id == cartItem.PresentCardId);
+                        if (product != null)
+                        {
+                            <div class="order-item-card">
+                                <img src="@product.ImageUrl" class="product-image" alt="@product.Name" />
+                                <div class="product-info">
+                                    <h3 class="product-name">@product.Name</h3>
+                                    <p class="product-description">@product.Description</p>
+                                </div>
+                                <div class="quantity-price">
+                                    <span class="quantity">@cartItem.Quantity шт.</span>
+                                    <span class="price">@CalculateItemTotal(cartItem) руб.</span>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+
+                <div class="order-summary">
+                    <div class="summary-card">
+                        <h3>Итог заказа</h3>
+                        <div class="summary-row">
+                            <span>Товары (@cartItemsCount шт.)</span>
+                            <span>@CalculateSubtotal() руб.</span>
+                        </div>
+                        <div class="summary-row">
+                            <span>Доставка</span>
+                            <span>Бесплатно</span>
+                        </div>
+                        <div class="summary-row total">
+                            <span>Итого к оплате</span>
+                            <span>@CalculateSubtotal() руб.</span>
+                        </div>
+
+                        <div class="delivery-info">
+                            <h4>Доставка</h4>
+                            <p>@deliveryDate</p>
+                        </div>
+
+                        <button class="place-order-btn" @onclick="PlaceOrder" disabled="@isProcessing">
+                            @if (isProcessing)
+                            {
+                                <span>Оформляем заказ...</span>
+                            }
+                            else
+                            {
+                                <span>Оформить заказ</span>
+                            }
+                        </button>
+                    </div>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="empty-cart">
+                <h2>Корзина пуста</h2>
+                <p>Добавьте товары в корзину для оформления заказа</p>
+                <button class="return-home-btn" @onclick="ReturnToHome">
+                    Вернуться на главную
+                </button>
+            </div>
+        }
+    }
+    else
+    {
+        <div class="order-success">
+            <div class="success-icon">✓</div>
+            <h2>Заказ успешно оформлен!</h2>
+            <p>Номер вашего заказа: <strong>#@newOrderId</strong></p>
+            <p>Статус: <span class="status-new">Обрабатывается</span></p>
+            <p>Мы свяжемся с вами для подтверждения заказа.</p>
+            <button class="return-home-btn" @onclick="ReturnToHome">
+                Вернуться на главную
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    private List<CartItem> cartItems = new();
+    private List<Product> products = new();
+    private string deliveryDate = "";
+    private bool orderCompleted = false;
+    private bool isProcessing = false;
+    private int newOrderId = 0;
+    private Random random = new();
+    private bool isBuyNowMode = false;
+    private int cartItemsCount = 0;
+
+    protected override async System.Threading.Tasks.Task OnInitializedAsync()
+    {
+        await LoadProducts();
+        await LoadCartItems();
+        SetDeliveryDate();
+    }
+
+    private async System.Threading.Tasks.Task LoadProducts()
+    {
+        products = await ProductService.GetProductsAsync();
+    }
+
+    private async System.Threading.Tasks.Task LoadCartItems()
+    {
+        try
+        {
+            // Сначала проверяем режим "Купить сейчас"
+            var buyNowCart = await JSRuntime.InvokeAsync<string>("localStorage.getItem", "buyNowCart");
+            if (!string.IsNullOrEmpty(buyNowCart))
+            {
+                // Режим быстрой покупки
+                var tempItems = System.Text.Json.JsonSerializer.Deserialize<List<TempCartItem>>(buyNowCart);
+                if (tempItems != null)
+                {
+                    cartItems = tempItems.Select(t => new CartItem
+                    {
+                        CartItemId = 0,
+                        ByerId = UserService.currentUser?.Email ?? "",
+                        PresentCardId = t.ProductId,
+                        Quantity = t.Quantity
+                    }).ToList();
+                }
+                isBuyNowMode = true;
+                // Очищаем временную корзину
+                await JSRuntime.InvokeVoidAsync("localStorage.removeItem", "buyNowCart");
+            }
+            else if (!string.IsNullOrEmpty(UserService.currentUser?.Email))
+            {
+                // Обычный режим - загружаем из базы данных
+                cartItems = await ProductService.GetUserCartItemsAsync(UserService.currentUser.Email);
+                isBuyNowMode = false;
+            }
+
+            cartItemsCount = cartItems.Sum(ci => ci.Quantity);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Ошибка загрузки корзины: {ex.Message}");
+            cartItems = new List<CartItem>();
+        }
+    }
+
+    private void SetDeliveryDate()
+    {
+        var daysToAdd = random.Next(1, 3);
+        var delivery = DateTime.Now.AddDays(daysToAdd);
+        deliveryDate = $"Доставим {delivery:dd.MM.yyyy}";
+    }
+
+    private string CalculateItemTotal(CartItem cartItem)
+    {
+        var product = products.FirstOrDefault(p => p.Id == cartItem.PresentCardId);
+        if (product != null && decimal.TryParse(product.Price, out decimal price))
+        {
+            return (price * cartItem.Quantity).ToString("N2");
+        }
+        return "0";
+    }
+
+    private string CalculateSubtotal()
+    {
+        decimal total = 0;
+        foreach (var cartItem in cartItems)
+        {
+            var product = products.FirstOrDefault(p => p.Id == cartItem.PresentCardId);
+            if (product != null && decimal.TryParse(product.Price, out decimal price))
+            {
+                total += price * cartItem.Quantity;
+            }
+        }
+        return total.ToString("N2");
+    }
+
+    private async System.Threading.Tasks.Task PlaceOrder()
+    {
+        if (cartItems.Count == 0)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", "Корзина пуста");
+            return;
+        }
+
+        isProcessing = true;
+        StateHasChanged();
+
+        try
+        {
+            // Создаем заказ через сервис
+            var orderId = await OrderService.CreateOrderAsync(
+                UserService.currentUser.Email,
+                cartItems,
+                decimal.Parse(CalculateSubtotal())
+            );
+
+            if (orderId > 0)
+            {
+                newOrderId = orderId;
+
+                // Очищаем корзину после оформления заказа
+                if (!isBuyNowMode && !string.IsNullOrEmpty(UserService.currentUser?.Email))
+                {
+                    await ProductService.ClearUserCartAsync(UserService.currentUser.Email);
+                }
+
+                orderCompleted = true;
+                await JSRuntime.InvokeVoidAsync("alert", $"Заказ #{orderId} успешно оформлен!");
+            }
+            else
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Ошибка создания заказа");
+            }
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Ошибка оформления заказа: {ex.Message}");
+        }
+        finally
+        {
+            isProcessing = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ReturnToHome()
+    {
+        NavigationManager.NavigateTo("/");
+    }
+
+    // Вспомогательный класс для временной корзины
+    private class TempCartItem
+    {
+        public int ProductId { get; set; }
+        public int Quantity { get; set; }
+    }
+}

@@ -1,0 +1,412 @@
+﻿@page "/"
+@using Microsoft.Extensions.Logging
+@using yyy.Services
+@using Marketplace.Models
+@inject IProductService ProductService
+@inject IJSRuntime JSRuntime
+@inject NavigationManager NavigationManager
+@inject UserService UserService
+@rendermode InteractiveServer
+
+<link href="css/gr.css" rel="stylesheet" />
+
+<!-- Всплывающее окно входа/регистрации -->
+@if (showLoginModal)
+{
+    <div class="modal-overlay" @onclick="CloseModal">
+        <div class="modal-content" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3>@(isLoginMode ? "Вход в аккаунт" : "Регистрация")</h3>
+                <button class="modal-close" @onclick="CloseModal">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" class="form-input" @bind="user.Email" />
+                </div>
+                <div class="form-group">
+                    <label>Пароль</label>
+                    <input type="password" class="form-input" @bind="user.Password" />
+                </div>
+                @if (!isLoginMode)
+                {
+                    <div class="form-group">
+                        <label>Имя</label>
+                        <input type="text" class="form-input" @bind="user.FirstName" />
+                    </div>
+                    <div class="form-group">
+                        <label>Фамилия</label>
+                        <input type="text" class="form-input" @bind="user.LastName" />
+                    </div>
+                    <div class="form-group">
+                        <label>Телефон</label>
+                        <input type="tel" class="form-input" @bind="user.Phone" />
+                    </div>
+                    <div class="form-group">
+                        <label>Подтвердите пароль</label>
+                        <input type="password" class="form-input" @bind="confirmPassword" />
+                    </div>
+                }
+                <button class="auth-btn" @onclick="HandleAuth">
+                    @(isLoginMode ? "Войти" : "Зарегистрироваться")
+                </button>
+
+                <div class="auth-links">
+                    @if (isLoginMode)
+                    {
+                        <a href="#" @onclick="ToggleMode" class="auth-link">Регистрация</a>
+                        <a href="#" @onclick="ShowForgotPassword" class="auth-link">Не могу войти</a>
+                    }
+                    else
+                    {
+                        <a href="#" @onclick="ToggleMode" class="auth-link">Уже есть аккаунт? Войти</a>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Верхняя панель навигации -->
+<nav class="top-nav">
+    <div class="nav-container">
+        <div class="nav-brand">VALUED</div>
+        <div class="search-container" style="margin: auto">
+            <input type="text" class="search-input" placeholder="Поиск товаров..."
+                   @oninput="OnSearchInput" @bind="searchText" @onkeypress="OnSearchKeyPress" />
+            <button class="search-btn" @onclick="SearchProducts">🔍</button>
+            @if (!string.IsNullOrEmpty(searchText))
+            {
+                <button class="clear-search" @onclick="ClearSearch">✕</button>
+            }
+        </div>
+        <ul class="nav-menu" style="margin-left: auto;">
+            <li><a href="/" class="nav-link active">Главная</a></li>
+            @if (isAuthenticated)
+            {
+                <li><a href="/profile" class="nav-link">Профиль</a></li>
+                <li><a href="#" class="nav-link" @onclick="Logout">Выйти</a></li>
+            }
+            else
+            {
+                <li><a href="#" class="nav-link" @onclick="ShowLoginModal">Вход</a></li>
+            }
+            <li><a href="/cart" class="nav-link cart-link">Корзина (@cartItemsCount)</a></li>
+        </ul>
+    </div>
+</nav>
+
+<div class="container">
+    @if (products == null)
+    {
+        <div class="loading">Загрузка товаров...</div>
+    }
+    else if (!products.Any())
+    {
+        <div class="error">Товары не найдены</div>
+    }
+    else
+    {
+        <div class="products-grid">
+            @foreach (var product in products)
+            {
+                <div class="product-card" @onclick="() => OnProductClick(product.Id)">
+                    <img src="@product.ImageUrl" class="product-image" />
+                    <div class="product-price">@product.Price руб.</div>
+                    <div class="product-name">@product.Name</div>
+                    <div class="product-actions">
+                        @if (IsProductInCart(product.Id))
+                        {
+                            <button class="btn btn-in-cart" disabled>
+                                В корзине
+                            </button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-cart" @onclick:stopPropagation @onclick="() => AddToCart(product.Id)">
+                                В корзину
+                            </button>
+                        }
+                        <button class="btn btn-buy" @onclick:stopPropagation @onclick="() => BuyNow(product.Id)">
+                            Купить
+                        </button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private List<Product> products = new();
+    private List<Product> allProducts = new();
+    private string searchText = string.Empty;
+    private bool showLoginModal = false;
+    private bool isLoginMode = true;
+    private bool isAuthenticated = false;
+    private Byer user = new();
+    private string confirmPassword = string.Empty;
+    private List<CartItem> userCartItems = new();
+    private int cartItemsCount = 0;
+    private string currentUserEmail = string.Empty;
+
+    protected override async System.Threading.Tasks.Task OnInitializedAsync()
+    {
+        try
+        {
+            await LoadProducts();
+            await CheckAuthenticationStatus();
+            if (isAuthenticated)
+            {
+                await LoadUserCart();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Ошибка загрузки: {ex.Message}");
+        }
+    }
+
+    private async System.Threading.Tasks.Task LoadProducts()
+    {
+        allProducts = await ProductService.GetProductsAsync();
+        products = allProducts;
+    }
+
+    private async System.Threading.Tasks.Task LoadUserCart()
+    {
+        try
+        {
+            if (isAuthenticated && !string.IsNullOrEmpty(currentUserEmail))
+            {
+                userCartItems = await ProductService.GetUserCartItemsAsync(currentUserEmail);
+                cartItemsCount = await ProductService.GetCartItemsCountAsync(currentUserEmail);
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Ошибка загрузки корзины: {ex.Message}");
+        }
+    }
+
+    private async System.Threading.Tasks.Task CheckAuthenticationStatus()
+    {
+        try
+        {
+            var savedEmail = await JSRuntime.InvokeAsync<string>("localStorage.getItem", "userEmail");
+            if (!string.IsNullOrEmpty(savedEmail))
+            {
+                currentUserEmail = savedEmail;
+                await UserService.LoadUserFromEmailAsync(savedEmail);
+                isAuthenticated = true;
+            }
+            else
+            {
+                isAuthenticated = false;
+                currentUserEmail = string.Empty;
+            }
+        }
+        catch
+        {
+            isAuthenticated = false;
+            currentUserEmail = string.Empty;
+        }
+    }
+
+    private void ShowLoginModal()
+    {
+        if (!isAuthenticated)
+        {
+            showLoginModal = true;
+            isLoginMode = true;
+            user = new Byer();
+            confirmPassword = string.Empty;
+            StateHasChanged();
+        }
+    }
+
+    private void CloseModal()
+    {
+        showLoginModal = false;
+        user = new Byer();
+        confirmPassword = string.Empty;
+        StateHasChanged();
+    }
+
+    private void ToggleMode()
+    {
+        isLoginMode = !isLoginMode;
+        user = new Byer();
+        confirmPassword = string.Empty;
+        StateHasChanged();
+    }
+
+    private async System.Threading.Tasks.Task HandleAuth()
+    {
+        if (string.IsNullOrEmpty(user.Email) || string.IsNullOrEmpty(user.Password))
+        {
+            await JSRuntime.InvokeVoidAsync("alert", "Заполните все поля");
+            return;
+        }
+
+        if (!isLoginMode && user.Password != confirmPassword)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", "Пароли не совпадают");
+            return;
+        }
+
+        if (isLoginMode)
+        {
+            // Логика входа
+            var success = await UserService.LoginAsync(user.Email, user.Password);
+            if (success)
+            {
+                isAuthenticated = true;
+                currentUserEmail = user.Email;
+                await JSRuntime.InvokeVoidAsync("localStorage.setItem", "userEmail", user.Email);
+                await JSRuntime.InvokeVoidAsync("alert", $"Вход выполнен: {user.Email}");
+                await LoadUserCart();
+                CloseModal();
+                StateHasChanged();
+            }
+            else
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Неверный email или пароль");
+            }
+        }
+        else
+        {
+            // Логика регистрации
+            var success = await UserService.RegisterAsync(
+                user.Email,
+                user.Password,
+                user.FirstName,
+                user.LastName,
+                user.Phone);
+
+            if (success)
+            {
+                isAuthenticated = true;
+                currentUserEmail = user.Email;
+                await JSRuntime.InvokeVoidAsync("localStorage.setItem", "userEmail", user.Email);
+                await JSRuntime.InvokeVoidAsync("alert", $"Регистрация выполнена: {user.Email}");
+                await LoadUserCart();
+                CloseModal();
+                StateHasChanged();
+            }
+            else
+            {
+                await JSRuntime.InvokeVoidAsync("alert", "Пользователь с таким email уже существует");
+            }
+        }
+    }
+
+    private async System.Threading.Tasks.Task AddToCart(int productId)
+    {
+        if (!isAuthenticated)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", "Для добавления в корзину необходимо войти в систему");
+            ShowLoginModal();
+            return;
+        }
+
+        if (string.IsNullOrEmpty(currentUserEmail))
+        {
+            await JSRuntime.InvokeVoidAsync("alert", "Ошибка авторизации");
+            return;
+        }
+
+        try
+        {
+            await ProductService.AddToCartAsync(currentUserEmail, productId, 1);
+            await LoadUserCart();
+            await JSRuntime.InvokeVoidAsync("alert", "Товар добавлен в корзину");
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", $"Ошибка: {ex.Message}");
+        }
+    }
+
+    private bool IsProductInCart(int productId)
+    {
+        if (!isAuthenticated) return false;
+        return userCartItems.Any(ci => ci.PresentCardId == productId);
+    }
+
+    private async System.Threading.Tasks.Task Logout()
+    {
+        isAuthenticated = false;
+        currentUserEmail = string.Empty;
+        UserService.Logout();
+        userCartItems = new List<CartItem>();
+        cartItemsCount = 0;
+        await JSRuntime.InvokeVoidAsync("localStorage.removeItem", "userEmail");
+        StateHasChanged();
+    }
+
+    private void ShowForgotPassword()
+    {
+        Console.WriteLine("Восстановление пароля");
+    }
+
+    private void SearchProducts()
+    {
+        if (string.IsNullOrWhiteSpace(searchText))
+        {
+            products = allProducts;
+        }
+        else
+        {
+            products = allProducts
+                .Where(p => p.Name.Contains(searchText, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+        StateHasChanged();
+    }
+
+    private void ClearSearch()
+    {
+        searchText = string.Empty;
+        products = allProducts;
+        StateHasChanged();
+    }
+
+    private void OnSearchInput(ChangeEventArgs e)
+    {
+        searchText = e.Value?.ToString() ?? string.Empty;
+        if (string.IsNullOrEmpty(searchText))
+        {
+            SearchProducts();
+        }
+    }
+
+    private void OnSearchKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            SearchProducts();
+        }
+    }
+
+    private async System.Threading.Tasks.Task BuyNow(int productId)
+    {
+        if (!isAuthenticated)
+        {
+            await JSRuntime.InvokeVoidAsync("alert", "Для покупки необходимо войти в систему");
+            ShowLoginModal();
+            return;
+        }
+
+        // Добавляем товар в корзину и переходим к оформлению
+        await AddToCart(productId);
+        NavigationManager.NavigateTo("/checkout");
+    }
+
+    private void OnProductClick(int productId)
+    {
+        NavigationManager.NavigateTo($"/product/{productId}");
+    }
+}

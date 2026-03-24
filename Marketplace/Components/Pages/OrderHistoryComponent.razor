@@ -1,0 +1,116 @@
+﻿@using Marketplace.Models
+@using yyy.Services
+@inject IOrderService OrderService
+@inject UserService UserService
+@rendermode InteractiveServer
+<link href="css/profiles.css" rel="stylesheet" />
+
+@if (isLoading)
+{
+    <div class="loading">Загрузка истории заказов...</div>
+}
+else if (hasError)
+{
+    <div class="error">
+        <p>Ошибка при загрузке истории заказов</p>
+        <button @onclick="RetryLoading" class="retry-btn">Попробовать снова</button>
+    </div>
+}
+else
+{
+    <div class="orders-grid">
+        @if (orders?.Any() == true)
+        {
+            @foreach (var order in orders)
+            {
+                <div class="order-card">
+                    <div class="order-status status-@GetStatusClass(order.Status)">
+                        @order.Status
+                    </div>
+                    <div class="order-number">Заказ #@order.OrderId</div>
+                    <div class="order-date">@order.OrderDate.ToString("dd.MM.yyyy HH:mm")</div>
+
+                    <div class="order-items">
+                        @for (int i = 0; i < order.Products.Count; i++)
+                        {
+                            <div class="order-item">
+                                <div class="item-name">@order.Products[i].Name</div>
+                                <div class="item-quantity">@order.Quantities[i] шт.</div>
+                                <div class="item-price">
+                                    @{
+                                        if (decimal.TryParse(order.Products[i].Price, out decimal price))
+                                        {
+                                            @((price * order.Quantities[i]).ToString("N2"))
+                                        }
+                                        else
+                                        {
+                                            @("0.00")
+                                        }
+                                    }
+                 руб.
+                                </div>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="order-total">Итого: @order.TotalAmount.ToString("N2") руб.</div>
+                </div>
+            }
+        }
+        else
+        {
+            <div class="empty-state">
+                <p>У вас пока нет завершенных заказов</p>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private List<OrderWithStatus> orders = new();
+    private bool isLoading = true;
+    private bool hasError = false;
+
+    protected override async System.Threading.Tasks.Task OnInitializedAsync()
+    {
+        await LoadOrderHistory();
+    }
+
+    private async System.Threading.Tasks.Task LoadOrderHistory()
+    {
+        try
+        {
+            isLoading = true;
+            hasError = false;
+            StateHasChanged();
+
+            // Проверяем авторизацию
+            if (UserService.currentUser == null || string.IsNullOrEmpty(UserService.currentUser.Email))
+            {
+                return;
+            }
+
+            orders = await OrderService.GetCompletedOrdersAsync(UserService.currentUser.Email);
+        }
+        catch (Exception ex)
+        {
+            hasError = true;
+            Console.WriteLine($"Ошибка загрузки истории заказов: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async System.Threading.Tasks.Task RetryLoading()
+    {
+        await LoadOrderHistory();
+    }
+
+    private string GetStatusClass(string status)
+    {
+        return status?.ToLower().Replace(" ", "-") ?? "unknown";
+    }
+}

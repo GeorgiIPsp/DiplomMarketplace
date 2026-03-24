@@ -1,0 +1,251 @@
+﻿@page "/cart"
+@using Microsoft.Extensions.Logging
+@using yyy.Services
+@using Marketplace.Models
+@inject IProductService ProductService
+@inject IJSRuntime JSRuntime
+@inject NavigationManager NavigationManager
+@inject UserService UserService
+@rendermode InteractiveServer
+
+<link href="css/cr.css" rel="stylesheet" />
+
+<!-- Верхняя панель навигации -->
+<nav class="top-nav">
+    <div class="nav-container">
+        <div class="nav-brand">VALUED</div>
+        <ul class="nav-menu" style="margin-left: auto;">
+            <li><a href="/" class="nav-link">Главная</a></li>
+            <li><a href="/profile" class="nav-link">Профиль</a></li>
+            <li><a href="/cart" class="nav-link cart-link active">Корзина (@cartItemsCount)</a></li>
+        </ul>
+    </div>
+</nav>
+
+<!-- Модальное окно подтверждения удаления -->
+@if (showDeleteConfirmation)
+{
+    <div class="modal-overlay" @onclick="CancelDelete">
+        <div class="modal-content confirmation-modal" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h3>Удаление товара</h3>
+                <button class="modal-close" @onclick="CancelDelete">×</button>
+            </div>
+            <div class="modal-body">
+                <p>Вы уверены, что хотите удалить товар "<strong>@productToDeleteName</strong>" из корзины?</p>
+                <div class="confirmation-buttons">
+                    <button class="btn btn-cancel" @onclick="CancelDelete">Отмена</button>
+                    <button class="btn btn-confirm" @onclick="ConfirmDelete">Удалить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<div class="cart-container">
+    <h1>Корзина</h1>
+
+    @if (cartItems?.Any() == true)
+    {
+        <div class="cart-content">
+            <div class="cart-items">
+                @foreach (var cartItem in cartItems)
+                {
+                    var product = products.FirstOrDefault(p => p.Id == cartItem.PresentCardId);
+                    if (product != null)
+                    {
+                        <div class="cart-item-card">
+                            <div class="product-info">
+                                <img src="@product.ImageUrl" class="product-image" alt="@product.Name" />
+                                <div class="product-details">
+                                    <h3 class="product-name">@product.Name</h3>
+                                    <p class="product-description">@product.Description</p>
+                                    <div class="price">@product.Price руб.</div>
+                                </div>
+                            </div>
+
+                            <div class="quantity-controls">
+                                <button class="quantity-btn" @onclick="() => DecreaseQuantity(cartItem)">-</button>
+                                <span class="quantity">@cartItem.Quantity</span>
+                                <button class="quantity-btn" @onclick="() => IncreaseQuantity(cartItem)">+</button>
+                                <button class="remove-btn" @onclick="() => ShowDeleteConfirmation(cartItem, product.Name)">🗑️</button>
+                            </div>
+
+                            <div class="item-total">
+                                @CalculateItemTotal(cartItem) руб.
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+
+            <div class="cart-summary">
+                <div class="summary-card">
+                    <h3>Ваш заказ</h3>
+                    <div class="summary-row">
+                        <span>Товары (@cartItemsCount шт.)</span>
+                        <span>@CalculateSubtotal() руб.</span>
+                    </div>
+                    <div class="summary-row">
+                        <span>Доставка</span>
+                        <span>Бесплатно</span>
+                    </div>
+                    <div class="summary-row total">
+                        <span>Итого</span>
+                        <span>@CalculateSubtotal() руб.</span>
+                    </div>
+
+                    <div class="delivery-info">
+                        <h4>Доставка</h4>
+                        <p>@deliveryDate</p>
+                    </div>
+
+                    <button class="checkout-btn" @onclick="ProceedToCheckout">
+                        Перейти к оформлению
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="empty-cart">
+            <h2>Корзина пуста</h2>
+            <p>Добавьте товары из каталога</p>
+            <button class="continue-shopping-btn" @onclick="ContinueShopping">
+                Продолжить покупки
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    private List<CartItem> cartItems = new();
+    private List<Product> products = new();
+    private string deliveryDate = "";
+    private int cartItemsCount = 0;
+    private Random random = new();
+
+    private bool showDeleteConfirmation = false;
+    private CartItem? cartItemToDelete = null;
+    private string productToDeleteName = "";
+
+    protected override async System.Threading.Tasks.Task OnInitializedAsync()
+    {
+        await LoadProducts();
+        await LoadUserCart();
+        SetDeliveryDate();
+    }
+
+    private async System.Threading.Tasks.Task LoadProducts()
+    {
+        products = await ProductService.GetProductsAsync();
+    }
+
+    private async System.Threading.Tasks.Task LoadUserCart()
+    {
+        if (!string.IsNullOrEmpty(UserService.currentUser?.Email))
+        {
+            cartItems = await ProductService.GetUserCartItemsAsync(UserService.currentUser.Email);
+            cartItemsCount = await ProductService.GetCartItemsCountAsync(UserService.currentUser.Email);
+            StateHasChanged();
+        }
+    }
+
+    private void SetDeliveryDate()
+    {
+        var daysToAdd = random.Next(1, 4);
+        var delivery = DateTime.Now.AddDays(daysToAdd);
+        deliveryDate = $"Доставим {delivery:dd.MM.yyyy}";
+    }
+
+    private string CalculateItemTotal(CartItem cartItem)
+    {
+        var product = products.FirstOrDefault(p => p.Id == cartItem.PresentCardId);
+        if (product != null && decimal.TryParse(product.Price, out decimal price))
+        {
+            return (price * cartItem.Quantity).ToString("N2");
+        }
+        return "0";
+    }
+
+    private string CalculateSubtotal()
+    {
+        decimal total = 0;
+        foreach (var cartItem in cartItems)
+        {
+            var product = products.FirstOrDefault(p => p.Id == cartItem.PresentCardId);
+            if (product != null && decimal.TryParse(product.Price, out decimal price))
+            {
+                total += price * cartItem.Quantity;
+            }
+        }
+        return total.ToString("N2");
+    }
+
+    private async System.Threading.Tasks.Task IncreaseQuantity(CartItem cartItem)
+    {
+        await ProductService.UpdateCartItemQuantityAsync(cartItem.CartItemId, cartItem.Quantity + 1);
+        await LoadUserCart();
+        StateHasChanged();
+    }
+
+    private async System.Threading.Tasks.Task DecreaseQuantity(CartItem cartItem)
+    {
+        if (cartItem.Quantity > 1)
+        {
+            await ProductService.UpdateCartItemQuantityAsync(cartItem.CartItemId, cartItem.Quantity - 1);
+            await LoadUserCart();
+            StateHasChanged();
+        }
+        else
+        {
+            var product = products.FirstOrDefault(p => p.Id == cartItem.PresentCardId);
+            if (product != null)
+            {
+                ShowDeleteConfirmation(cartItem, product.Name);
+            }
+        }
+    }
+
+    private void ShowDeleteConfirmation(CartItem cartItem, string productName)
+    {
+        cartItemToDelete = cartItem;
+        productToDeleteName = productName;
+        showDeleteConfirmation = true;
+        StateHasChanged();
+    }
+
+    private async System.Threading.Tasks.Task ConfirmDelete()
+    {
+        if (cartItemToDelete != null)
+        {
+            await ProductService.RemoveFromCartAsync(cartItemToDelete.CartItemId);
+            await LoadUserCart();
+            await JSRuntime.InvokeVoidAsync("alert", "Товар удален из корзины");
+        }
+
+        showDeleteConfirmation = false;
+        cartItemToDelete = null;
+        productToDeleteName = "";
+        StateHasChanged();
+    }
+
+    private void CancelDelete()
+    {
+        showDeleteConfirmation = false;
+        cartItemToDelete = null;
+        productToDeleteName = "";
+        StateHasChanged();
+    }
+
+    private void ProceedToCheckout()
+    {
+        NavigationManager.NavigateTo("/checkout");
+    }
+
+    private void ContinueShopping()
+    {
+        NavigationManager.NavigateTo("/");
+    }
+}
