@@ -46,29 +46,27 @@ namespace yyy.Services
 
                 await _context.Orders.AddAsync(order);
                 await _context.SaveChangesAsync();
+                Console.WriteLine($"Создан заказ ID: {order.OrderId}");
 
-                // 2. Для каждого товара в корзине создаем НОВЫЙ CartItem (копию) для заказа
+                // 2. Для каждого товара в корзине создаем OrderItem и сразу сохраняем
                 foreach (var cartItem in cartItems)
                 {
-                    // Создаем новый CartItem для заказа (копируем данные)
-                    var newCartItem = new CartItem
-                    {
-                        ByerId = byerEmail,
-                        PresentCardId = cartItem.PresentCardId,
-                        Quantity = cartItem.Quantity
-                    };
-
-                    await _context.CartItems.AddAsync(newCartItem);
-                    await _context.SaveChangesAsync();
-
-                    // Создаем OrderItem, связанный с новым CartItem
+                    // Создаем новый экземпляр для каждого OrderItem
                     var orderItem = new OrderItem
                     {
                         OrderId = order.OrderId,
-                        CartItemId = newCartItem.CartItemId,
+                        CartItemId = cartItem.PresentCardId,
+                        Count = cartItem.Quantity,
                         StatusBoughtOut = "pending"
                     };
-                    await _context.OrderItems.AddAsync(orderItem);
+
+                    // Добавляем и сразу сохраняем
+                    _context.OrderItems.Add(orderItem);
+                    await _context.SaveChangesAsync();
+                    Console.WriteLine($"Добавлен OrderItem: PresentCardId={cartItem.PresentCardId}, Quantity={cartItem.Quantity}");
+
+                    // Отсоединяем, чтобы избежать конфликта при следующей итерации
+                    _context.Entry(orderItem).State = EntityState.Detached;
                 }
 
                 // 3. Добавляем начальный статус "Создан"
@@ -84,10 +82,12 @@ namespace yyy.Services
                         DataEdit = DateTime.Now
                     };
                     await _context.StatusHistoryOrders.AddAsync(statusHistory);
+                    await _context.SaveChangesAsync();
+                    Console.WriteLine("Добавлен статус 'Создан'");
                 }
 
-                await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
+                Console.WriteLine($"Транзакция завершена. Заказ #{order.OrderId} создан");
 
                 return order.OrderId;
             }
@@ -95,6 +95,7 @@ namespace yyy.Services
             {
                 await transaction.RollbackAsync();
                 Console.WriteLine($"Ошибка создания заказа: {ex.Message}");
+                Console.WriteLine($"Stack Trace: {ex.StackTrace}");
                 throw;
             }
         }
@@ -164,9 +165,6 @@ namespace yyy.Services
         {
             var orders = await _context.Orders
                 .Include(o => o.OrderItems)
-                    .ThenInclude(oi => oi.CartItem)
-                        .ThenInclude(ci => ci.PresentCard)
-                            .ThenInclude(pc => pc.ProductPrices)
                 .Include(o => o.StatusHistoryOrders)
                     .ThenInclude(sh => sh.DictionaryStatusHistory)
                 .Where(o => o.ByerId == byerEmail)
@@ -272,14 +270,13 @@ namespace yyy.Services
 
             foreach (var orderItem in order.OrderItems)
             {
-                if (orderItem.CartItem?.PresentCard != null)
+                // Получаем товар через PresentCardId (который хранится в CartItemId)
+                var product = allProducts.FirstOrDefault(p => p.Id == orderItem.CartItemId);
+                if (product != null)
                 {
-                    var product = allProducts.FirstOrDefault(p => p.Id == orderItem.CartItem.PresentCard.PresentCardId);
-                    if (product != null)
-                    {
-                        orderWithStatus.Products.Add(product);
-                        orderWithStatus.Quantities.Add(orderItem.CartItem.Quantity);
-                    }
+                    orderWithStatus.Products.Add(product);
+                    orderWithStatus.Quantities.Add(orderItem.Count);  // ← используем Count из OrderItem
+                    orderWithStatus.Counts.Add(orderItem.Count);      // ← тоже количество
                 }
             }
 

@@ -260,15 +260,22 @@
         {
             // Логика входа
             var success = await UserService.LoginAsync(user.Email, user.Password);
-            if (success)
+            if (success != null)
             {
-                isAuthenticated = true;
-                currentUserEmail = user.Email;
-                await JSRuntime.InvokeVoidAsync("localStorage.setItem", "userEmail", user.Email);
-                await JSRuntime.InvokeVoidAsync("alert", $"Вход выполнен: {user.Email}");
-                await LoadUserCart();
-                CloseModal();
-                StateHasChanged();
+                if (success.IsActive == true)
+                {
+                    isAuthenticated = true;
+                    currentUserEmail = success.Email;
+                    await JSRuntime.InvokeVoidAsync("localStorage.setItem", "userEmail", success.Email);
+                    await JSRuntime.InvokeVoidAsync("alert", $"Вход выполнен: {success.Email}");
+                    await LoadUserCart();
+                    CloseModal();
+                    StateHasChanged();
+                }
+                else
+                {
+                    await JSRuntime.InvokeVoidAsync("alert", "Данная учетная запись больше не активна. Для разблокировки обратитесь в поддрежку");
+                }
             }
             else
             {

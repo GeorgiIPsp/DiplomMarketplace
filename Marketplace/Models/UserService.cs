@@ -17,7 +17,7 @@ namespace Marketplace.Models
             _context = context;
         }
 
-        public async Task<bool> LoginAsync(string email, string password)
+        public async Task<Byer> LoginAsync(string email, string password)
         {
             try
             {
@@ -32,16 +32,17 @@ namespace Marketplace.Models
                         Password = user.Password,
                         FirstName = user.FirstName,
                         LastName = user.LastName,
-                        Phone = user.Phone
+                        Phone = user.Phone,
+                        IsActive = user.IsActive
                     };
-                    return true;
+                    return user;
                 }
-                return false;
+                return null;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Ошибка входа: {ex.Message}");
-                return false;
+                return null;
             }
         }
 

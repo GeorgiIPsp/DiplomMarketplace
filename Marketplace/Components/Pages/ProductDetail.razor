@@ -298,7 +298,7 @@
         if (isLoginMode)
         {
             var success = await UserService.LoginAsync(user.Email, user.Password);
-            if (success)
+            if (success != null)
             {
                 isAuthenticated = true;
                 await JSRuntime.InvokeVoidAsync("localStorage.setItem", "userEmail", user.Email);

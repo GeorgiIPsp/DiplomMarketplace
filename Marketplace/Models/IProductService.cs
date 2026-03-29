@@ -218,23 +218,10 @@ namespace Marketplace.Models
 
                 if (cartItems.Any())
                 {
-                    // Для каждого CartItem проверяем наличие связанных OrderItem
-                    foreach (var cartItem in cartItems)
-                    {
-                        var orderItems = await _context.OrderItems
-                            .Where(oi => oi.CartItemId == cartItem.CartItemId)
-                            .ToListAsync();
-
-                        if (orderItems.Any())
-                        {
-                            _context.OrderItems.RemoveRange(orderItems);
-                        }
-                    }
-                    await _context.SaveChangesAsync(); // Сохраняем удаление OrderItems
-
-                    // Удаляем все CartItem
+                    // Удаляем ВСЕ CartItem пользователя
                     _context.CartItems.RemoveRange(cartItems);
                     await _context.SaveChangesAsync();
+                    Console.WriteLine($"Удалено {cartItems.Count} товаров из корзины");
                 }
             }
             catch (Exception ex)

@@ -11,6 +11,7 @@ public partial class OrderItem
 
     public int CartItemId { get; set; }
 
+    public int Count { get; set; }
     public string? StatusBoughtOut { get; set; }
 
     public virtual CartItem CartItem { get; set; } = null!;

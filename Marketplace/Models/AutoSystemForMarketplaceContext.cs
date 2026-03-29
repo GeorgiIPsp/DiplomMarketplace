@@ -286,6 +286,7 @@ public partial class AutoSystemForMarketplaceContext : DbContext
             entity.HasIndex(e => e.OrderId, "idx_order_items_order");
 
             entity.Property(e => e.OrderItemsId).HasColumnName("order_items_id");
+            entity.Property(e => e.OrderItemsId).HasColumnName("count");
             entity.Property(e => e.CartItemId).HasColumnName("cart_item_id");
             entity.Property(e => e.OrderId).HasColumnName("order_id");
             entity.Property(e => e.StatusBoughtOut)
